@@ -2,7 +2,7 @@
 
 rm -rf test/
 
-read -r -p "Enter project name: " project_name
+read -r -p "Enter project name: " project_name < /dev/tty
 mkdir "$project_name" || exit
 
 PROJECT_DIR="$PWD/$project_name"
@@ -20,7 +20,7 @@ touch Makefile
 
 go version > /dev/null || { echo "Go not found"; exit; }
 
-read -r -p "Enter module path: " module_path
+read -r -p "Enter module path: " module_path < /dev/tty
 
 go mod init "$module_path" 2> /dev/null || { echo "Error while go mod init"; exit; }
 
