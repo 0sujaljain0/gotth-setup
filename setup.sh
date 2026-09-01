@@ -26,14 +26,26 @@ read -r -p "Enter module path: " module_path < /dev/tty
 
 go mod init "$module_path" 2> /dev/null || { echo "Error while go mod init"; exit; }
 
-# Automatically load NVM if npm isn't found in current PATH
+# Locate and load NVM across standard path locations
 if ! command -v npm &> /dev/null; then
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+    # Try standard user home path
+    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+    
+    if [ -s "$NVM_DIR/nvm.sh" ]; then
+        . "$NVM_DIR/nvm.sh"
+    elif [ -s "$HOME/.nvm/nvm.sh" ]; then
+        . "$HOME/.nvm/nvm.sh"
+    elif [ -s "/usr/local/share/nvm/nvm.sh" ]; then
+        . "/usr/local/share/nvm/nvm.sh"
+    fi
 fi
 
-npm --version > /dev/null || { echo "npm not found"; exit; }
-
+# Fallback: manually export the node/npm binary path from active environment if NVM script isn't found
+if ! command -v npm &> /dev/null; then
+    NODE_BIN_PATH=$(dirname "$(which node 2>/dev/null)")
+    [ -n "$NODE_BIN_PATH" ] && export PATH="$PATH:$NODE_BIN_PATH"
+fi
+npm --version > /dev/null || { echo "npm not found"; exit 1; }
 npm init -y > /dev/null || { echo "npm init failed"; exit; }
 npm install -D tailwindcss @tailwindcss/cli > /dev/null || { echo "error installing tailwindcss"; }
 
@@ -90,20 +102,14 @@ import (
 	\"os\"
 )
 
-func NewLogger(logFilePath string) (*slog.Logger, func()) {
+func NewLogger(logFilePath string) (*slog.Logger, func() error, error) {
 	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
-	closeFunc := func() {
-		err := logFile.Close()
-		if err != nil {
-			panic(fmt.Errorf(\"while closing the file: %+v\", err))
-		}
-	}
 
 	if err != nil {
-		panic(fmt.Sprintf(\"log file not initialized: %s\", err))
+		return nil, nil, fmt.Errorf("open log file %s: %w", logFilePath, err)
 	}
 
-	return slog.New(slog.NewTextHandler(logFile, nil)), closeFunc
+	return slog.New(slog.NewTextHandler(logFile, nil)), logFile.Close, nil
 }" > "$PROJECT_DIR"/pkg/utils/base.go
 
 
@@ -152,31 +158,42 @@ func ConfigureServer(port uint16, id string, logger *slog.Logger) (*Server, erro
 	mux.Handle(\"GET /static/\", http.StripPrefix(\"/static/\", fs))
 
 	mux.HandleFunc(\"GET /\", func(w http.ResponseWriter, r *http.Request) {
-		err := views.Home().Render(context.Background(), w)
-		if err != nil {
-			panic(err)
-		}
+        if err := views.Home().Render(r.Context(), w); err != nil {
+			logger.ErrorContext(r.Context(), "render home", "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+        }
 	})
 
 	return server, nil
 }
 
-func main() {
-	logger, closer := utils.NewLogger(\"logs.log\") // This returns a logger, do use it if you feel like.
+func run() error {
+	logger, closer, err := utils.NewLogger("logs.log") // This returns a logger, do use it if you feel like.
 	defer closer()
-	server, err := ConfigureServer(8080, \"dev.bundler.test\", logger)
+
+	server, err := ConfigureServer(5301, "dev.bundler.test", logger)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	if err := server.Start(); err != nil {
-		panic(err)
+		return err
+	}
+	
+	return nil
+}
+
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, "babylon:", err)
+		os.Exit(1)
 	}
 }" > "$PROJECT_DIR/cmd/main.go"
 
 
 echo "build:
-	mkdir -p tmp/ && rm -rf tmp/* &&  go build -o tmp/main cmd/main.go 
+	mkdir -p tmp/ && rm -rf tmp/* && go build -o tmp/main ./cmd 
 
 format:
 	gofmt -w .
@@ -248,6 +265,9 @@ tmp_dir = \"tmp\"
   clear_on_rebuild = false
   keep_scroll = true" > "$PROJECT_DIR"/.air.toml
 
+npx @tailwindcss/cli -i ./static/css/input.css -o ./static/css/tailwind.css
+
 go get github.com/a-h/templ@latest
 templ generate
 go mod tidy
+
