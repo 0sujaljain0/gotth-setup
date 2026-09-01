@@ -2,6 +2,8 @@
 
 rm -rf test/
 
+
+
 read -r -p "Enter project name: " project_name < /dev/tty
 mkdir "$project_name" || exit
 
@@ -24,7 +26,14 @@ read -r -p "Enter module path: " module_path < /dev/tty
 
 go mod init "$module_path" 2> /dev/null || { echo "Error while go mod init"; exit; }
 
+# Automatically load NVM if npm isn't found in current PATH
+if ! command -v npm &> /dev/null; then
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+fi
+
 npm --version > /dev/null || { echo "npm not found"; exit; }
+
 npm init -y > /dev/null || { echo "npm init failed"; exit; }
 npm install -D tailwindcss @tailwindcss/cli > /dev/null || { echo "error installing tailwindcss"; }
 
